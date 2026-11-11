@@ -3,3 +3,10 @@
 *.db-wal
 *.db-shm
 photond.toml
+music/*.mp3
+music/*.ogg
+music/*.opus
+music/*.m4a
+music/*.wav
+music/*.flac
+music/playlist.json

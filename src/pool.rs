@@ -16,9 +16,18 @@ use tokio::sync::watch;
 pub struct Stats {
     pub conns: AtomicU64,
     pub accepted: AtomicU64,
+    /// Duplicate, low difficulty and malformed shares.
     pub rejected: AtomicU64,
+    pub dup: AtomicU64,
+    pub inv: AtomicU64,
     pub stale: AtomicU64,
     pub blocks: AtomicU64,
+    pub jobs: AtomicU64,
+    pub bytes_in: AtomicU64,
+    pub bytes_out: AtomicU64,
+    pub connects: AtomicU64,
+    pub closed: AtomicU64,
+    pub refused: AtomicU64,
     pub accepted_diff: Mutex<f64>,
 }
 
@@ -30,6 +39,8 @@ pub struct Timings {
     pub templates: AtomicU64,
     pub empty_jobs: AtomicU64,
     pub published_unix: AtomicU64,
+    pub tip_unix: AtomicU64,
+    pub node_up: std::sync::atomic::AtomicBool,
 }
 
 pub struct Pool {
@@ -154,7 +165,9 @@ impl Pool {
                 }
                 Err(e) => {
                     if !down {
-                        self.event("err", format!("node link lost: {e}"));
+                        tracing::error!("node link lost: {e}");
+                        self.timings.node_up.store(false, Ordering::Relaxed);
+                        self.live.event("err", "node link lost".into());
                     }
                     down = true;
                     tokio::time::sleep(Duration::from_millis(500)).await;
@@ -172,6 +185,7 @@ impl Pool {
             let woke = Instant::now();
             match self.build_template().await {
                 Ok(t) => {
+                    let t_is_refresh = t.tip_hex == last_tip;
                     if t.tip_hex != last_tip {
                         self.event("info", format!("new tip {} at height {}, {} transactions, reward {} sats", t.tip_hex, t.height - 1, t.txs.len(), t.coinbase_value));
                     }
@@ -179,8 +193,11 @@ impl Pool {
                     last_build = Instant::now();
                     self.template.send_replace(Some(Arc::new(t)));
                     self.timings.publish_ms.store(woke.elapsed().as_millis() as u64, Ordering::Relaxed);
+                    if !t_is_refresh { self.live.tip_ready(woke.elapsed().as_secs_f64() * 1000.0); }
                     self.timings.templates.fetch_add(1, Ordering::Relaxed);
                     self.timings.published_unix.store(crate::live::unix_now(), Ordering::Relaxed);
+                    if !t_is_refresh { self.timings.tip_unix.store(crate::live::unix_now(), Ordering::Relaxed); }
+                    self.timings.node_up.store(true, Ordering::Relaxed);
                     tracing::debug!("template published {} ms after the wake-up", woke.elapsed().as_millis());
                 }
                 Err(e) => {
@@ -193,18 +210,56 @@ impl Pool {
 
     pub async fn run_stats_loop(self: Arc<Self>) {
         let mut last = (0u64, 0u64, 0u64, Instant::now(), 0.0f64);
+        let mut hist_last = (0u64, 0u64, 0u64);
         loop {
             tokio::time::sleep(Duration::from_secs(60)).await;
-            let (acc, rej, stale) = (self.stats.accepted.load(Ordering::Relaxed), self.stats.rejected.load(Ordering::Relaxed), self.stats.stale.load(Ordering::Relaxed));
-            let diff = *self.stats.accepted_diff.lock().unwrap();
+            let st = &self.stats;
+            let (acc, rej, stale) = (st.accepted.load(Ordering::Relaxed), st.rejected.load(Ordering::Relaxed), st.stale.load(Ordering::Relaxed));
+            let diff = *st.accepted_diff.lock().unwrap();
             let secs = last.3.elapsed().as_secs_f64();
             let hs = (diff - last.4) * 4_294_967_296.0 / secs;
             tracing::info!(
                 "connections {} | shares +{} (rejected +{}, stale +{}) | hashrate ~{} | blocks {}",
-                self.stats.conns.load(Ordering::Relaxed), acc - last.0, rej - last.1, stale - last.2, fmt_hashrate(hs), self.stats.blocks.load(Ordering::Relaxed)
+                st.conns.load(Ordering::Relaxed), acc - last.0, rej - last.1, stale - last.2, fmt_hashrate(hs), st.blocks.load(Ordering::Relaxed)
             );
             last = (acc, rej, stale, Instant::now(), diff);
-            self.live.sample(self.stats.conns.load(Ordering::Relaxed));
+            let hashrate = self.live.sample();
+            let nd = self.template.borrow().as_ref().map(|t| difficulty_from_target(&t.target)).unwrap_or(0.0);
+            let devices = self.live.devices().into_iter().map(|d| (d.key, d.name, d.hashrate, d.working)).collect();
+            self.ledger.add_history(
+                (crate::live::unix_now() / 60) as i64, hashrate, self.live.workers_online(), acc - hist_last.0, stale - hist_last.1, rej - hist_last.2, nd, devices,
+            );
+            hist_last = (acc, stale, rej);
+        }
+    }
+
+    /// Per-second rates for the engine view.
+    pub async fn run_rates_loop(self: Arc<Self>) {
+        loop {
+            let s = &self.stats;
+            let c = |a: &AtomicU64| a.load(Ordering::Relaxed);
+            self.live.tick([c(&s.accepted) + c(&s.rejected) + c(&s.stale), c(&s.jobs), c(&s.connects), c(&s.bytes_in), c(&s.bytes_out)]);
+            tokio::time::sleep(Duration::from_secs(2)).await;
+        }
+    }
+
+    /// Marks found blocks as mature after 100 confirmations and as orphaned when the chain does not contain them.
+    pub async fn run_maturity_loop(self: Arc<Self>) {
+        loop {
+            tokio::time::sleep(Duration::from_secs(60)).await;
+            let Some(tip) = self.template.borrow().as_ref().map(|t| t.height.saturating_sub(1)) else { continue };
+            let ledger = self.ledger.clone();
+            let pending = tokio::task::spawn_blocking(move || ledger.maturing_blocks()).await.unwrap_or_default();
+            for (height, hash) in pending {
+                if tip < height {
+                    continue;
+                }
+                match self.node.call("getblockhash", serde_json::json!([height])).await {
+                    Ok(v) if v.as_str() != Some(hash.as_str()) => self.ledger.set_block_status(&hash, "orphaned"),
+                    Ok(_) if tip + 1 >= height + 100 => self.ledger.set_block_status(&hash, "mature"),
+                    _ => {}
+                }
+            }
         }
     }
 }

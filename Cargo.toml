@@ -7,7 +7,8 @@ license = "MIT"
 
 [dependencies]
 anyhow = "1"
-axum = { version = "0.7", default-features = false, features = ["http1", "tokio", "json"] }
+axum = { version = "0.7", default-features = false, features = ["http1", "tokio", "json", "query", "matched-path"] }
+tower-http = { version = "0.5", features = ["fs"] }
 base64 = "0.22"
 bech32 = "0.11"
 bytes = "1"

@@ -44,7 +44,6 @@ pub struct Template {
     pub plan: Option<Vec<TxOutput>>,
     /// Payout address of each plan output ("pool" for the pool output), for the pages.
     pub plan_labels: Vec<String>,
-    pub empty: bool,
     /// Job id shared by all connections for this template.
     pub seq: u64,
     tag: Vec<u8>,
@@ -114,7 +113,6 @@ impl Template {
             branch: merkle_branch(&txids),
             plan: None,
             plan_labels: Vec::new(),
-            empty: false,
             seq,
             tag: tag.to_vec(),
             shared: OnceLock::new(),
@@ -145,12 +143,16 @@ impl Template {
             branch: Vec::new(),
             plan: None,
             plan_labels: Vec::new(),
-            empty: true,
             seq,
             tag: prev.tag.clone(),
             shared: OnceLock::new(),
             by_script: Mutex::new(HashMap::new()),
         })
+    }
+
+    /// Number of different coinbase variants handed out for this template.
+    pub fn variants(&self) -> usize {
+        if self.plan.is_some() { 1 } else { self.by_script.lock().unwrap().len().max(1) }
     }
 
     pub fn job_id(&self) -> String {

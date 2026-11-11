@@ -1,0 +1,8 @@
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /public/v1/account/
+Allow: /public/v1/
+
+# Machine-readable summary for language models
+# /llms.txt

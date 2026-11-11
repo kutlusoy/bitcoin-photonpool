@@ -1,0 +1,12 @@
+{
+  "tracks": [
+    {
+      "file": "my-track.mp3",
+      "title": "Title shown in the player",
+      "artist": "Artist",
+      "credit": "Music: 'Title' by Artist on #Uppbeat",
+      "url": "https://example.org/artist-page",
+      "license": "LICENSE-CODE-FROM-THE-DOWNLOAD-DIALOG"
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+# Photon Pool for Bitcoin
+
+> Photon Pool is a fast, open-source, headless mining pool for Bitcoin Core, written in Rust. It serves ASIC and hobby miners over Stratum V1 with solo and non-custodial PPLNS payouts: the coinbase of every block the pool finds pays the miners directly, so the pool never holds their coins.
+
+## How it works
+
+- Talks to a stock Bitcoin Core node over RPC (getblocktemplate, submitblock, waitfornewblock). A pruned node is enough.
+- New work is sent within milliseconds of a new block; one job per template is shared by all connections.
+- Stratum V1 with version rolling and variable difficulty. User name: `<your bitcoin address>.<worker name>`, password: anything.
+- Open source (MIT). Source: https://github.com/kutlusoy/bitcoin-photonpool

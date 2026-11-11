@@ -1,6 +1,6 @@
 use crate::addr::script_for_address;
 use crate::config::Mode;
-use crate::diff::target_from_difficulty;
+use crate::diff::{difficulty_from_target, target_from_difficulty};
 use crate::pool::Pool;
 use crate::template::Template;
 use crate::tx::{coinbase_with_witness, merkle_root, put_varint, sha256d, EN1_BYTES, EN2_BYTES};
@@ -26,16 +26,19 @@ pub async fn serve(pool: Arc<Pool>) -> anyhow::Result<()> {
     loop {
         let (sock, peer) = listener.accept().await?;
         if pool.stats.conns.load(Ordering::Relaxed) as usize >= pool.cfg.pool.max_connections {
+            pool.stats.refused.fetch_add(1, Ordering::Relaxed);
             continue;
         }
         let _ = sock.set_nodelay(true);
         let pool = pool.clone();
         tokio::spawn(async move {
             pool.stats.conns.fetch_add(1, Ordering::Relaxed);
+            pool.stats.connects.fetch_add(1, Ordering::Relaxed);
             if let Err(e) = Session::run(pool.clone(), sock).await {
                 tracing::debug!("{peer}: {e}");
             }
             pool.stats.conns.fetch_sub(1, Ordering::Relaxed);
+            pool.stats.closed.fetch_add(1, Ordering::Relaxed);
         });
     }
 }
@@ -84,7 +87,8 @@ enum Reject {
 
 struct Accepted {
     credited: f64,
-    block: Option<(Vec<u8>, String)>,
+    actual: f64,
+    block: Option<(Vec<u8>, String, Arc<Template>)>,
 }
 
 impl Session {
@@ -118,6 +122,7 @@ impl Session {
                 line = rx.recv() => {
                     let Some(line) = line else { return Ok(()) };
                     last_seen = Instant::now();
+                    s.pool.stats.bytes_in.fetch_add(line.len() as u64, Ordering::Relaxed);
                     s.handle(&line).await?;
                 }
                 changed = tpl_rx.changed() => {
@@ -145,6 +150,7 @@ impl Session {
     async fn send(&mut self, v: Value) -> anyhow::Result<()> {
         let mut line = serde_json::to_vec(&v)?;
         line.push(b'\n');
+        self.pool.stats.bytes_out.fetch_add(line.len() as u64, Ordering::Relaxed);
         tokio::time::timeout(Duration::from_secs(10), self.w.write_all(&line)).await??;
         Ok(())
     }
@@ -232,9 +238,9 @@ impl Session {
                         st.accepted.fetch_add(1, Ordering::Relaxed);
                         *st.accepted_diff.lock().unwrap() += acc.credited;
                         self.pool.ledger.share(&self.addr, acc.credited);
-                        self.pool.live.share(&self.addr, &self.worker, acc.credited);
-                        if let Some((block_hex, hash)) = acc.block {
-                            self.found_block(block_hex, hash);
+                        self.pool.live.share(&self.addr, &self.worker, acc.credited, acc.actual);
+                        if let Some((block_hex, hash, tpl)) = acc.block {
+                            self.found_block(block_hex, hash, tpl);
                         }
                         self.reply(&id, json!(true), Value::Null).await?;
                         self.retarget(false).await
@@ -246,11 +252,13 @@ impl Session {
                             Reject::Low => (23, "Low difficulty share"),
                             Reject::Other(m) => (20, m),
                         };
+                        self.pool.live.reject(&self.addr, &self.worker, matches!(rej, Reject::Stale));
                         if matches!(rej, Reject::Stale) {
                             self.pool.stats.stale.fetch_add(1, Ordering::Relaxed);
                         } else {
                             self.pool.stats.rejected.fetch_add(1, Ordering::Relaxed);
-                            self.pool.live.reject(&self.addr, &self.worker);
+                            let counter = if matches!(rej, Reject::Duplicate) { &self.pool.stats.dup } else { &self.pool.stats.inv };
+                            counter.fetch_add(1, Ordering::Relaxed);
                             self.bad_streak += 1;
                             if self.bad_streak >= 100 {
                                 anyhow::bail!("too many invalid shares");
@@ -282,6 +290,8 @@ impl Session {
             }
         }
         let line = data.notify(clean);
+        self.pool.stats.jobs.fetch_add(1, Ordering::Relaxed);
+        self.pool.stats.bytes_out.fetch_add(line.len() as u64, Ordering::Relaxed);
         tokio::time::timeout(Duration::from_secs(10), self.w.write_all(&line)).await??;
         Ok(())
     }
@@ -325,7 +335,7 @@ impl Session {
             put_varint(&mut b, t.txs.len() as u64 + 1);
             b.extend_from_slice(&if t.witness_commitment.is_some() { coinbase_with_witness(&cb) } else { cb });
             t.txs.iter().for_each(|x| b.extend_from_slice(x));
-            (b, hex::encode(hash))
+            (b, hex::encode(hash), t.clone())
         });
         let credited = if hash <= target_from_difficulty(self.diff) {
             self.diff
@@ -336,14 +346,17 @@ impl Session {
                 _ => return Err(Reject::Low),
             }
         };
-        Ok(Accepted { credited, block })
+        Ok(Accepted { credited, actual: difficulty_from_target(&hash), block })
     }
 
-    fn found_block(&self, block: Vec<u8>, hash: String) {
+    fn found_block(&self, block: Vec<u8>, hash: String, tpl: Arc<Template>) {
         let pool = self.pool.clone();
-        let height = self.jobs.values().next().map(|j| j.tpl.height).unwrap_or(0);
-        let reward = self.jobs.values().next().map(|j| j.tpl.coinbase_value).unwrap_or(0);
-        let who = if pool.cfg.pool.mode == Mode::Solo { self.addr.clone() } else { "pplns".to_string() };
+        let (height, reward) = (tpl.height, tpl.coinbase_value);
+        let (mode, finder) = (if pool.cfg.pool.mode == Mode::Solo { "solo" } else { "pplns" }, self.addr.clone());
+        let credits: Vec<(String, u64)> = match &tpl.plan {
+            Some(plan) => plan.iter().zip(&tpl.plan_labels).filter(|(_, l)| *l != "pool").map(|(o, l)| (l.clone(), o.value)).collect(),
+            None => vec![(finder.clone(), reward)],
+        };
         let block_hex = Arc::new(hex::encode(block));
         for n in pool.extra_nodes.iter().cloned() {
             let b = block_hex.clone();
@@ -360,11 +373,12 @@ impl Session {
                 Ok(Some(r)) => r,
                 Err(e) => format!("error: {e}"),
             };
-            pool.event(if res == "accepted" { "info" } else { "warn" }, format!("BLOCK height {height} hash {hash} found by {who}: {res}"));
+            let who = crate::public::mask(&finder);
+            pool.event(if res == "accepted" { "blk" } else { "warn" }, format!("BLOCK FOUND {height} [{mode}] {hash} by {who}: {res}"));
             if res == "accepted" {
                 pool.stats.blocks.fetch_add(1, Ordering::Relaxed);
             }
-            pool.ledger.block(height, &hash, &who, reward, &res);
+            pool.ledger.record_block(height, &hash, &finder, mode, reward, &res, credits);
         });
     }
 

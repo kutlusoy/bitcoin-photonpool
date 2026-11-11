@@ -1,9 +1,11 @@
 mod addr;
-mod api;
+mod public;
 mod config;
 mod diff;
 mod ledger;
 mod live;
+mod music;
+mod devices;
 mod plan;
 mod pool;
 mod rpc;
@@ -49,8 +51,10 @@ async fn main() -> Result<()> {
         Cmd::Run => {
             tokio::spawn(pool.clone().run_template_loop());
             tokio::spawn(pool.clone().run_stats_loop());
+            tokio::spawn(pool.clone().run_rates_loop());
+            tokio::spawn(pool.clone().run_maturity_loop());
             if !pool.cfg.http.listen.is_empty() {
-                tokio::spawn(api::serve(pool.clone()));
+                tokio::spawn(public::serve(pool.clone()));
             }
             tokio::select! {
                 r = stratum::serve(pool.clone()) => r,

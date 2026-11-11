@@ -30,9 +30,27 @@ pub struct Config {
 
 #[derive(Deserialize, Clone)]
 pub struct HttpCfg {
-    /// Address of the web page and JSON API; empty disables it.
+    /// Address of the web page and API; empty disables it.
     #[serde(default = "d_http")]
     pub listen: String,
+    /// Name shown on the page.
+    #[serde(default = "d_name")]
+    pub name: String,
+    /// Host shown in the stratum URL; empty uses the host of the page.
+    #[serde(default)]
+    pub stratum_host: String,
+    /// Block explorer used for links, for example https://mempool.space; empty for none.
+    #[serde(default)]
+    pub explorer_url: String,
+    /// Folder with audio files for the player and an optional playlist.json.
+    #[serde(default = "d_music")]
+    pub music_dir: String,
+    /// Requests per minute and client for the data API.
+    #[serde(default = "d_rate")]
+    pub rate_per_min: u32,
+    /// Take the client address from X-Forwarded-For (only behind a reverse proxy you control).
+    #[serde(default)]
+    pub trust_proxy: bool,
 }
 
 #[derive(Deserialize, Clone)]
@@ -120,6 +138,9 @@ fn d_window() -> f64 { 2.0 }
 fn d_fee() -> f64 { 1.0 }
 fn d_outputs() -> usize { 200 }
 fn d_dust() -> u64 { 1000 }
+fn d_name() -> String { "photon".into() }
+fn d_music() -> String { "music".into() }
+fn d_rate() -> u32 { 300 }
 fn d_http() -> String { "127.0.0.1:8080".into() }
 fn d_db() -> String { "photond.db".into() }
 
@@ -135,7 +156,7 @@ impl Default for PplnsCfg {
 }
 impl Default for HttpCfg {
     fn default() -> Self {
-        Self { listen: d_http() }
+        Self { listen: d_http(), name: d_name(), stratum_host: String::new(), explorer_url: String::new(), music_dir: d_music(), rate_per_min: d_rate(), trust_proxy: false }
     }
 }
 impl Default for LedgerCfg {
