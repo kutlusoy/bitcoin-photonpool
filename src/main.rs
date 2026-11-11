@@ -1,7 +1,9 @@
 mod addr;
+mod api;
 mod config;
 mod diff;
 mod ledger;
+mod live;
 mod plan;
 mod pool;
 mod rpc;
@@ -47,6 +49,9 @@ async fn main() -> Result<()> {
         Cmd::Run => {
             tokio::spawn(pool.clone().run_template_loop());
             tokio::spawn(pool.clone().run_stats_loop());
+            if !pool.cfg.http.listen.is_empty() {
+                tokio::spawn(api::serve(pool.clone()));
+            }
             tokio::select! {
                 r = stratum::serve(pool.clone()) => r,
                 _ = tokio::signal::ctrl_c() => { tracing::info!("shutting down"); pool.ledger.flush_now(); Ok(()) }

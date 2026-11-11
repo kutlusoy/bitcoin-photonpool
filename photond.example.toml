@@ -29,3 +29,8 @@ dust_sats = 1000
 
 [ledger]
 path = "photond.db"
+
+[http]
+# Web page and JSON API (/api/pool, /api/engine, /api/history, /api/miner/<address>); empty disables.
+# Binds to localhost by default: put a reverse proxy with TLS in front to publish it.
+listen = "127.0.0.1:8080"

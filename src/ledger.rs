@@ -142,6 +142,13 @@ impl Ledger {
         out
     }
 
+    /// The newest found blocks: (time, height, hash, address, reward, result).
+    pub fn recent_blocks(&self, n: i64) -> Vec<(i64, u32, String, String, i64, String)> {
+        let Ok(c) = open(&self.path) else { return Vec::new() };
+        let Ok(mut st) = c.prepare("SELECT ts, height, hash, addr, reward, result FROM blocks ORDER BY id DESC LIMIT ?1") else { return Vec::new() };
+        st.query_map(params![n], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?))).map(|rows| rows.flatten().collect()).unwrap_or_default()
+    }
+
     /// Writes pending shares now (shutdown).
     pub fn flush_now(&self) {
         if let Ok(mut c) = open(&self.path) {

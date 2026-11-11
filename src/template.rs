@@ -42,6 +42,9 @@ pub struct Template {
     pub branch: Vec<[u8; 32]>,
     /// Coinbase outputs shared by all connections (pplns mode); `None` in solo mode.
     pub plan: Option<Vec<TxOutput>>,
+    /// Payout address of each plan output ("pool" for the pool output), for the pages.
+    pub plan_labels: Vec<String>,
+    pub empty: bool,
     /// Job id shared by all connections for this template.
     pub seq: u64,
     tag: Vec<u8>,
@@ -110,6 +113,8 @@ impl Template {
             txs: g.transactions.iter().map(|t| hex::decode(&t.data)).collect::<Result<Vec<_>, _>>()?,
             branch: merkle_branch(&txids),
             plan: None,
+            plan_labels: Vec::new(),
+            empty: false,
             seq,
             tag: tag.to_vec(),
             shared: OnceLock::new(),
@@ -139,6 +144,8 @@ impl Template {
             txs: Vec::new(),
             branch: Vec::new(),
             plan: None,
+            plan_labels: Vec::new(),
+            empty: true,
             seq,
             tag: prev.tag.clone(),
             shared: OnceLock::new(),

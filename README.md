@@ -19,6 +19,16 @@ Payout addresses: P2PKH, P2SH, P2WPKH, P2WSH and P2TR.
 - Chain parameters are not hardcoded: bits, target, reward, height and the witness commitment all come from `getblocktemplate`. Only the address prefixes depend on `pool.network`.
 - The coinbase is built by the pool: BIP34 height, pool tag, 4 byte extranonce1 per connection, 4 byte extranonce2 rolled by the miner, witness commitment from the node.
 
+## Web page
+
+The daemon serves a single page without build step (`ui/index.html`, embedded in the binary) and a read-only JSON API on `[http] listen` (default `127.0.0.1:8080`):
+
+- Pool: hashrate (5 minute estimate and 24 h chart), miners, top miners, found blocks, and in pplns mode the payout plan of the next coinbase.
+- Engine: chain tip, template kind (empty-first or full), node RPC and build timings, new-block-to-job time, shares and rejects, event feed.
+- Miner: enter your address to see workers, hashrate, share of the PPLNS window and what you would receive in the next block.
+
+Addresses of other miners are shortened on the public views. Hashrate history is kept in memory (24 h) and starts empty after a restart.
+
 ## Build and run
 
 ```text

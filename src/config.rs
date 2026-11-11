@@ -24,6 +24,15 @@ pub struct Config {
     pub pplns: PplnsCfg,
     #[serde(default)]
     pub ledger: LedgerCfg,
+    #[serde(default)]
+    pub http: HttpCfg,
+}
+
+#[derive(Deserialize, Clone)]
+pub struct HttpCfg {
+    /// Address of the web page and JSON API; empty disables it.
+    #[serde(default = "d_http")]
+    pub listen: String,
 }
 
 #[derive(Deserialize, Clone)]
@@ -111,6 +120,7 @@ fn d_window() -> f64 { 2.0 }
 fn d_fee() -> f64 { 1.0 }
 fn d_outputs() -> usize { 200 }
 fn d_dust() -> u64 { 1000 }
+fn d_http() -> String { "127.0.0.1:8080".into() }
 fn d_db() -> String { "photond.db".into() }
 
 impl Default for DiffCfg {
@@ -121,6 +131,11 @@ impl Default for DiffCfg {
 impl Default for PplnsCfg {
     fn default() -> Self {
         Self { window_factor: d_window(), fee_percent: d_fee(), max_outputs: d_outputs(), dust_sats: d_dust() }
+    }
+}
+impl Default for HttpCfg {
+    fn default() -> Self {
+        Self { listen: d_http() }
     }
 }
 impl Default for LedgerCfg {

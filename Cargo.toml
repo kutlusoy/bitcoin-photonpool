@@ -7,6 +7,7 @@ license = "MIT"
 
 [dependencies]
 anyhow = "1"
+axum = { version = "0.7", default-features = false, features = ["http1", "tokio", "json"] }
 base64 = "0.22"
 bech32 = "0.11"
 bytes = "1"

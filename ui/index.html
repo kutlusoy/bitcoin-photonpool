@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>photond</title>
+<style>
+:root{--bg:#0b0e11;--panel:#12171c;--line:#222a33;--fg:#d5dde5;--dim:#7d8b99;--acc:#f7931a;--ok:#3ddc97;--bad:#ff5d6c;--warn:#f2c14e;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+@media (prefers-color-scheme:light){:root{--bg:#f4f6f8;--panel:#fff;--line:#dde3e9;--fg:#1b232b;--dim:#6a7784;--acc:#d97706;--ok:#12865a;--bad:#c7283a;--warn:#a16207}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 var(--mono)}
+header{display:flex;flex-wrap:wrap;align-items:center;gap:12px 24px;padding:14px 16px;border-bottom:1px solid var(--line);background:var(--panel)}
+.logo{color:var(--acc);font-weight:700;letter-spacing:.04em}
+nav{display:flex;gap:4px;flex-wrap:wrap}
+nav a{color:var(--dim);text-decoration:none;padding:4px 10px;border:1px solid transparent;border-radius:4px}
+nav a.on{color:var(--acc);border-color:var(--acc)}
+.net{margin-left:auto;color:var(--dim);font-size:12px}
+main{max-width:1100px;margin:0 auto;padding:16px}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-bottom:16px}
+.tile{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:10px 12px}
+.tile .k{color:var(--dim);font-size:11px;text-transform:uppercase;letter-spacing:.06em}
+.tile .v{font-size:20px;margin-top:2px;overflow-wrap:anywhere}
+.tile .s{color:var(--dim);font-size:12px}
+section{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:12px;margin-bottom:16px}
+h2{margin:0 0 8px;font-size:12px;color:var(--dim);text-transform:uppercase;letter-spacing:.08em;font-weight:600}
+table{width:100%;border-collapse:collapse}
+th,td{text-align:left;padding:5px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
+th{color:var(--dim);font-weight:500;font-size:12px}
+td.r,th.r{text-align:right}
+.wrap{overflow-x:auto}
+.ok{color:var(--ok)}.bad{color:var(--bad)}.warn{color:var(--warn)}.dim{color:var(--dim)}
+.bar{display:flex;height:18px;border-radius:3px;overflow:hidden;background:var(--line);margin:6px 0 10px}
+.bar i{display:block;height:100%}
+svg{width:100%;height:150px;display:block}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media (max-width:800px){.grid2{grid-template-columns:1fr}}
+input{background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:4px;padding:7px 10px;font:inherit;width:100%;max-width:560px}
+button{background:var(--acc);color:#111;border:0;border-radius:4px;padding:7px 14px;font:inherit;cursor:pointer}
+.ev{max-height:340px;overflow:auto}
+.ev div{padding:2px 0;border-bottom:1px solid var(--line);overflow-wrap:anywhere}
+footer{color:var(--dim);text-align:center;font-size:12px;padding:16px}
+</style>
+</head>
+<body>
+<header>
+  <span class="logo">photond</span>
+  <nav id="nav"><a href="#/" data-v="pool">Pool</a><a href="#/engine" data-v="engine">Engine</a><a href="#/miner" data-v="miner">Miner</a></nav>
+  <span class="net" id="net"></span>
+</header>
+<main id="app"></main>
+<footer id="foot"></footer>
+<script>
+"use strict";
+const $ = (s, r = document) => r.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
+const COLORS = ["#f7931a", "#3ddc97", "#4aa3ff", "#c084fc", "#f2c14e", "#ff5d6c", "#22d3ee", "#a3e635"];
+
+function hr(h) {
+  if (!isFinite(h) || h <= 0) return "0 H/s";
+  const u = ["H/s", "kH/s", "MH/s", "GH/s", "TH/s", "PH/s", "EH/s", "ZH/s"];
+  let i = 0;
+  while (h >= 1000 && i < u.length - 1) { h /= 1000; i++; }
+  return h.toFixed(h >= 100 ? 0 : h >= 10 ? 1 : 2) + " " + u[i];
+}
+const num = n => n == null ? "-" : Number(n).toLocaleString("en-US");
+const btc = s => s == null ? "-" : (s / 1e8).toFixed(8);
+const diff = d => { if (d == null) return "-"; const u = ["", "k", "M", "G", "T", "P"]; let i = 0; while (d >= 1000 && i < 5) { d /= 1000; i++; } return d.toFixed(2) + u[i]; };
+function ago(t) {
+  if (!t) return "never";
+  const s = Math.max(0, Math.floor(Date.now() / 1000 - t));
+  if (s < 90) return s + "s ago";
+  if (s < 5400) return Math.round(s / 60) + "m ago";
+  if (s < 129600) return Math.round(s / 3600) + "h ago";
+  return Math.round(s / 86400) + "d ago";
+}
+const dur = s => s < 3600 ? Math.floor(s / 60) + "m" : s < 86400 ? (s / 3600).toFixed(1) + "h" : (s / 86400).toFixed(1) + "d";
+const tile = (k, v, s) => `<div class="tile"><div class="k">${esc(k)}</div><div class="v">${v}</div>${s ? `<div class="s">${s}</div>` : ""}</div>`;
+async function get(u) {
+  const r = await fetch(u, {cache: "no-store"});
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.status);
+  return r.json();
+}
+
+function chart(points, key, color) {
+  if (points.length < 2) return '<div class="dim">Collecting data, one point per minute.</div>';
+  const W = 1000, H = 150, P = 6;
+  const xs = points.map(p => p.t), ys = points.map(p => p[key]);
+  const x0 = xs[0], x1 = xs[xs.length - 1], y1 = Math.max(...ys, 1) * 1.1;
+  const X = t => P + (t - x0) / Math.max(1, x1 - x0) * (W - 2 * P), Y = v => H - P - v / y1 * (H - 2 * P);
+  const line = points.map((p, i) => (i ? "L" : "M") + X(p.t).toFixed(1) + " " + Y(p[key]).toFixed(1)).join(" ");
+  const area = line + ` L${X(x1).toFixed(1)} ${H - P} L${X(x0).toFixed(1)} ${H - P} Z`;
+  return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><path d="${area}" fill="${color}" opacity=".15"/><path d="${line}" fill="none" stroke="${color}" stroke-width="2" vector-effect="non-scaling-stroke"/></svg>
+  <div class="dim" style="display:flex;justify-content:space-between;font-size:12px"><span>${ago(x0)}</span><span>peak ${key === "hashrate" ? hr(y1 / 1.1) : num(Math.round(y1 / 1.1))}</span><span>now</span></div>`;
+}
+
+function planBar(plan) {
+  if (!plan.length) return '<div class="dim">No payout plan yet (solo mode pays the block finder directly).</div>';
+  const bar = plan.map((o, i) => `<i style="width:${Math.max(o.pct, .3)}%;background:${o.address === "pool" ? "var(--dim)" : COLORS[i % COLORS.length]}" title="${esc(o.address)} ${o.pct.toFixed(2)}%"></i>`).join("");
+  const row = (o, i) => `<tr><td><span style="color:${o.address === "pool" ? "var(--dim)" : COLORS[i % COLORS.length]}">&#9632;</span> ${esc(o.address)}</td><td class="r">${btc(o.sats)}</td><td class="r">${o.pct.toFixed(2)}%</td></tr>`;
+  const SHOW = 10;
+  const last = plan.length - 1, hasPool = plan[last].address === "pool";
+  const head = plan.slice(0, Math.min(SHOW, hasPool ? last : plan.length)).map(row).join("");
+  const hidden = plan.length - (hasPool ? 1 : 0) - SHOW;
+  const more = hidden > 0 ? `<tr><td colspan="3" class="dim">... and ${hidden} more miner outputs</td></tr>` : "";
+  const pool = hasPool ? row(plan[last], last) : "";
+  return `<div class="bar">${bar}</div><div class="dim" style="margin-bottom:6px">${plan.length} coinbase outputs</div><div class="wrap"><table><tr><th>Output</th><th class="r">BTC</th><th class="r">Share</th></tr>${head}${more}${pool}</table></div>`;
+}
+
+const views = {
+  async pool() {
+    const [p, h] = await Promise.all([get("/api/pool"), get("/api/history")]);
+    $("#net").textContent = `${p.network} | ${p.mode}${p.mode === "pplns" ? " | fee " + p.fee_percent + "%" : ""} | up ${dur(p.uptime_s)}`;
+    const top = p.top.map(t => `<tr><td>${esc(t.address)}</td><td class="r">${hr(t.hashrate)}</td><td class="r">${t.workers}</td><td class="r">${t.share_pct.toFixed(1)}%</td><td class="r">${num(t.accepted)}</td></tr>`).join("") || '<tr><td colspan="5" class="dim">No miners connected.</td></tr>';
+    const blocks = p.blocks.map(b => `<tr><td>${num(b.height)}</td><td>${ago(b.time)}</td><td>${esc(b.address)}</td><td class="r">${btc(b.reward)}</td><td class="${b.result === "accepted" ? "ok" : "bad"}">${esc(b.result)}</td></tr>`).join("") || '<tr><td colspan="5" class="dim">No block found yet.</td></tr>';
+    const accRate = p.accepted + p.rejected + p.stale > 0 ? (p.accepted / (p.accepted + p.rejected + p.stale) * 100).toFixed(2) + "%" : "-";
+    return `<div class="tiles">
+      ${tile("Pool hashrate", hr(p.hashrate), p.net_hashrate ? `${(p.hashrate / p.net_hashrate * 100).toExponential(2)} % of network` : "")}
+      ${tile("Miners", num(p.workers), `${num(p.connections)} connections`)}
+      ${tile("Chain tip", num(p.height), `${num(p.transactions)} tx in template`)}
+      ${tile("Block reward", btc(p.reward_sats), "subsidy plus fees")}
+      ${tile("Network difficulty", diff(p.net_difficulty), p.net_hashrate ? hr(p.net_hashrate) : "")}
+      ${tile("Blocks found", num(p.blocks_found), `shares accepted ${accRate}`)}
+    </div>
+    <section><h2>Pool hashrate, last 24 h</h2>${chart(h, "hashrate", "var(--acc)")}</section>
+    <div class="grid2">
+      <section><h2>Top miners</h2><div class="wrap"><table><tr><th>Address</th><th class="r">Hashrate</th><th class="r">Workers</th><th class="r">Share</th><th class="r">Shares</th></tr>${top}</table></div></section>
+      <section><h2>Found blocks</h2><div class="wrap"><table><tr><th>Height</th><th>When</th><th>Finder</th><th class="r">Reward</th><th>Result</th></tr>${blocks}</table></div></section>
+    </div>
+    <section><h2>${p.mode === "pplns" ? "Coinbase payout plan of the next block" : "Payout"}</h2>${p.mode === "pplns" ? planBar(p.plan) : '<div class="dim">Solo mode: the miner that finds a block is paid directly by the coinbase.</div>'}</section>`;
+  },
+  async engine() {
+    const [e, h] = await Promise.all([get("/api/engine"), get("/api/history")]);
+    const t = e.template, tm = e.timings_ms;
+    const ev = e.events.map(x => `<div><span class="dim">${new Date(x.time * 1000).toLocaleTimeString()}</span> <span class="${x.level === "err" ? "bad" : x.level === "warn" ? "warn" : ""}">${esc(x.message)}</span></div>`).join("") || '<div class="dim">No events yet.</div>';
+    return `<div class="tiles">
+      ${tile("Chain tip", num(e.height), esc((e.tip || "").slice(0, 20)) + "...")}
+      ${tile("Template", t ? esc(t.kind) : "-", t ? `${num(t.transactions)} tx, job ${esc(t.job_id)}, ${e.template_age_s}s old` : "")}
+      ${tile("Node RPC", tm.node_rpc + " ms", "getblocktemplate")}
+      ${tile("Parse and plan", tm.build + " ms", "template build on the pool")}
+      ${tile("New block to job", tm.wake_to_publish + " ms", "from node wake-up to publish")}
+      ${tile("Empty-first jobs", num(e.empty_jobs), `of ${num(e.templates)} templates, ${e.fast_empty_job ? "enabled" : "off"}`)}
+      ${tile("Connections", num(e.connections), `extra submit nodes: ${e.extra_nodes}`)}
+      ${tile("Shares", num(e.accepted), `<span class="${e.rejected ? "bad" : ""}">rejected ${num(e.rejected)}</span>, stale ${num(e.stale)}`)}
+    </div>
+    <section><h2>Connections, last 24 h</h2>${chart(h, "connections", "var(--ok)")}</section>
+    <section><h2>Events</h2><div class="ev">${ev}</div></section>`;
+  },
+  async miner(arg) {
+    const saved = (() => { try { return localStorage.getItem("addr") || ""; } catch (_) { return ""; } })();
+    const addr = (arg || saved || "").trim();
+    let out = `<section><h2>Your address</h2><form onsubmit="go(event)"><input id="addr" value="${esc(addr)}" placeholder="Bitcoin address you mine with" autocomplete="off" spellcheck="false"> <button>Show</button></form></section>`;
+    if (!addr) return out + '<div class="dim">Enter the address you use as the user name in your miner (address.worker).</div>';
+    try {
+      const m = await get("/api/miner/" + encodeURIComponent(addr));
+      try { localStorage.setItem("addr", addr); } catch (_) {}
+      const w = m.workers.map(x => `<tr><td>${esc(x.name)}</td><td class="${x.online ? "ok" : "dim"}">${x.online ? "online" : "offline"}</td><td class="r">${hr(x.hashrate)}</td><td class="r">${num(x.accepted)}</td><td class="r">${num(x.rejected)}</td><td>${ago(x.last_share)}</td><td>${esc(x.agent)}</td></tr>`).join("") || '<tr><td colspan="7" class="dim">No worker seen since the pool started.</td></tr>';
+      out += `<div class="tiles">
+        ${tile("Hashrate (5 min)", hr(m.hashrate), `${m.workers.filter(x => x.online).length} worker(s) online`)}
+        ${tile("Shares accepted", num(m.accepted), `rejected ${num(m.rejected)}`)}
+        ${tile("Last share", ago(m.last_share))}
+        ${m.mode === "pplns" ? tile("Share of the window", m.window_pct == null ? "-" : m.window_pct.toFixed(2) + " %", "of the PPLNS window") : ""}
+        ${m.mode === "pplns" ? tile("In the next block", btc(m.payout_in_next_block_sats), "paid by the coinbase if the pool finds it") : tile("Payout", "direct", "you are paid by the blocks you find")}
+      </div><section><h2>Workers</h2><div class="wrap"><table><tr><th>Name</th><th>State</th><th class="r">Hashrate</th><th class="r">Accepted</th><th class="r">Rejected</th><th>Last share</th><th>Agent</th></tr>${w}</table></div></section>`;
+    } catch (err) {
+      out += `<div class="bad">${esc(err.message)}</div>`;
+    }
+    return out;
+  }
+};
+
+function go(ev) {
+  ev.preventDefault();
+  location.hash = "#/miner/" + encodeURIComponent($("#addr").value.trim());
+}
+
+let timer = null, busy = false;
+async function render() {
+  if (busy) return;
+  busy = true;
+  const parts = location.hash.replace(/^#\/?/, "").split("/");
+  const v = views[parts[0]] ? parts[0] : "pool";
+  document.querySelectorAll("nav a").forEach(a => a.classList.toggle("on", a.dataset.v === v));
+  const typing = document.activeElement && document.activeElement.tagName === "INPUT";
+  try {
+    const html = await views[v](decodeURIComponent(parts.slice(1).join("/")));
+    if (!typing) $("#app").innerHTML = html;
+    $("#foot").textContent = "updated " + new Date().toLocaleTimeString() + " | refreshes every 5 s";
+  } catch (err) {
+    $("#app").innerHTML = `<div class="bad">${esc(err.message)}</div>`;
+  }
+  busy = false;
+}
+window.addEventListener("hashchange", () => { document.activeElement && document.activeElement.blur(); render(); });
+render();
+timer = setInterval(render, 5000);
+</script>
+</body>
+</html>

@@ -2,6 +2,7 @@ use crate::addr::{script_for_address, Network};
 use crate::config::{Config, Mode};
 use crate::diff::difficulty_from_target;
 use crate::ledger::Ledger;
+use crate::live::Live;
 use crate::plan::build_plan;
 use crate::rpc::NodeRpc;
 use crate::template::Template;
@@ -21,6 +22,16 @@ pub struct Stats {
     pub accepted_diff: Mutex<f64>,
 }
 
+#[derive(Default)]
+pub struct Timings {
+    pub rpc_ms: AtomicU64,
+    pub build_ms: AtomicU64,
+    pub publish_ms: AtomicU64,
+    pub templates: AtomicU64,
+    pub empty_jobs: AtomicU64,
+    pub published_unix: AtomicU64,
+}
+
 pub struct Pool {
     pub cfg: Config,
     pub net: Network,
@@ -30,6 +41,9 @@ pub struct Pool {
     pub pool_script: Vec<u8>,
     pub stats: Stats,
     pub template: watch::Sender<Option<Arc<Template>>>,
+    pub live: Live,
+    pub started: Instant,
+    pub timings: Timings,
     en1_seq: AtomicU32,
     job_seq: AtomicU64,
 }
@@ -49,7 +63,7 @@ impl Pool {
         let pool_script = script_for_address(&cfg.pool.address, net)?;
         let ledger = Ledger::open(&cfg.ledger.path).with_context(|| format!("opening ledger {}", cfg.ledger.path))?;
         let (template, _) = watch::channel(None);
-        Ok(Arc::new(Pool { extra_nodes, cfg, net, node, ledger, pool_script, stats: Stats::default(), template, en1_seq: AtomicU32::new(rand_start()), job_seq: AtomicU64::new(0) }))
+        Ok(Arc::new(Pool { live: Live::new(), started: Instant::now(), timings: Timings::default(), extra_nodes, cfg, net, node, ledger, pool_script, stats: Stats::default(), template, en1_seq: AtomicU32::new(rand_start()), job_seq: AtomicU64::new(0) }))
     }
 
     pub fn next_en1(&self) -> [u8; 4] {
@@ -63,6 +77,8 @@ impl Pool {
         let seq = self.job_seq.fetch_add(1, Ordering::Relaxed) + 1;
         let mut t = Template::from_body(&body, seq, self.cfg.pool.coinbase_tag.as_bytes())?;
         self.attach_plan(&mut t);
+        self.timings.rpc_ms.store(t_rpc.as_millis() as u64, Ordering::Relaxed);
+        self.timings.build_ms.store((t0.elapsed() - t_rpc).as_millis() as u64, Ordering::Relaxed);
         tracing::debug!("template: rpc {} ms, parse and plan {} ms", t_rpc.as_millis(), (t0.elapsed() - t_rpc).as_millis());
         Ok(t)
     }
@@ -72,10 +88,18 @@ impl Pool {
             return;
         }
         let limit = (self.cfg.pplns.window_factor * difficulty_from_target(&t.target)).max(1e-9);
-        let window: Vec<(Vec<u8>, f64)> = self.ledger.window(limit).into_iter().filter_map(|(a, w)| script_for_address(&a, self.net).ok().map(|s| (s, w))).collect();
+        let scripted: Vec<(String, Vec<u8>, f64)> = self.ledger.window(limit).into_iter().filter_map(|(a, w)| script_for_address(&a, self.net).ok().map(|s| (a, s, w))).collect();
+        let window: Vec<(Vec<u8>, f64)> = scripted.iter().map(|(_, s, w)| (s.clone(), *w)).collect();
         let mut pplns = self.cfg.pplns.clone();
         pplns.max_outputs = pplns.outputs_for_weight(self.cfg.pool.coinbase_reserved_weight);
-        t.plan = Some(build_plan(t.coinbase_value, &window, &self.pool_script, &pplns));
+        let plan = build_plan(t.coinbase_value, &window, &self.pool_script, &pplns);
+        let last = plan.len().saturating_sub(1);
+        t.plan_labels = plan
+            .iter()
+            .enumerate()
+            .map(|(i, o)| if i == last && o.script == self.pool_script { "pool".to_string() } else { scripted.iter().find(|(_, s, _)| *s == o.script).map(|(a, _, _)| a.clone()).unwrap_or_else(|| "pool".to_string()) })
+            .collect();
+        t.plan = Some(plan);
     }
 
     /// Publishes a block without transactions on the new tip right away, before the node has produced the full template.
@@ -86,7 +110,17 @@ impl Pool {
         if let Some(mut t) = Template::empty_on_top_of(&prev, tip_hex, tip_height, now, self.net.halving_interval(), self.net.retargets(), seq) {
             self.attach_plan(&mut t);
             self.template.send_replace(Some(Arc::new(t)));
+            self.timings.empty_jobs.fetch_add(1, Ordering::Relaxed);
         }
+    }
+
+    pub fn event(&self, level: &'static str, msg: String) {
+        match level {
+            "err" => tracing::error!("{msg}"),
+            "warn" => tracing::warn!("{msg}"),
+            _ => tracing::info!("{msg}"),
+        }
+        self.live.event(level, msg);
     }
 
     /// Publishes a new template when the tip changes and every `refresh_secs`. The tip is awaited with `waitfornewblock`, so a new block is seen the moment the node has it;
@@ -120,7 +154,7 @@ impl Pool {
                 }
                 Err(e) => {
                     if !down {
-                        tracing::error!("node link lost: {e}");
+                        self.event("err", format!("node link lost: {e}"));
                     }
                     down = true;
                     tokio::time::sleep(Duration::from_millis(500)).await;
@@ -128,7 +162,7 @@ impl Pool {
                 }
             };
             if down {
-                tracing::info!("node link restored");
+                self.event("info", "node link restored".into());
                 down = false;
             }
             if !first && best == last_tip && last_build.elapsed() < refresh {
@@ -139,11 +173,14 @@ impl Pool {
             match self.build_template().await {
                 Ok(t) => {
                     if t.tip_hex != last_tip {
-                        tracing::info!("new tip {} at height {}, {} transactions, reward {} sats", t.tip_hex, t.height - 1, t.txs.len(), t.coinbase_value);
+                        self.event("info", format!("new tip {} at height {}, {} transactions, reward {} sats", t.tip_hex, t.height - 1, t.txs.len(), t.coinbase_value));
                     }
                     last_tip = t.tip_hex.clone();
                     last_build = Instant::now();
                     self.template.send_replace(Some(Arc::new(t)));
+                    self.timings.publish_ms.store(woke.elapsed().as_millis() as u64, Ordering::Relaxed);
+                    self.timings.templates.fetch_add(1, Ordering::Relaxed);
+                    self.timings.published_unix.store(crate::live::unix_now(), Ordering::Relaxed);
                     tracing::debug!("template published {} ms after the wake-up", woke.elapsed().as_millis());
                 }
                 Err(e) => {
@@ -167,6 +204,7 @@ impl Pool {
                 self.stats.conns.load(Ordering::Relaxed), acc - last.0, rej - last.1, stale - last.2, fmt_hashrate(hs), self.stats.blocks.load(Ordering::Relaxed)
             );
             last = (acc, rej, stale, Instant::now(), diff);
+            self.live.sample(self.stats.conns.load(Ordering::Relaxed));
         }
     }
 }

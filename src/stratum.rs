@@ -51,6 +51,7 @@ struct Session {
     w: OwnedWriteHalf,
     en1: [u8; EN1_BYTES],
     subscribed: bool,
+    agent: String,
     addr: String,
     worker: String,
     script: Vec<u8>,
@@ -64,6 +65,14 @@ struct Session {
     shares: u32,
     last_retarget: Instant,
     bad_streak: u32,
+}
+
+impl Drop for Session {
+    fn drop(&mut self) {
+        if self.authorized {
+            self.pool.live.disconnect(&self.addr, &self.worker);
+        }
+    }
 }
 
 enum Reject {
@@ -98,7 +107,7 @@ impl Session {
         });
         let start = pool.cfg.difficulty.start;
         let mut s = Session {
-            en1: pool.next_en1(), pool, w, subscribed: false, addr: String::new(), worker: String::new(), script: Vec::new(), authorized: false, diff: start, prev_diff: None, mask: 0,
+            en1: pool.next_en1(), pool, w, subscribed: false, agent: String::new(), addr: String::new(), worker: String::new(), script: Vec::new(), authorized: false, diff: start, prev_diff: None, mask: 0,
             jobs: HashMap::new(), order: VecDeque::new(), tip: String::new(), shares: 0, last_retarget: Instant::now(), bad_streak: 0,
         };
         let mut tpl_rx = s.pool.template.subscribe();
@@ -165,6 +174,7 @@ impl Session {
             }
             "mining.subscribe" => {
                 self.subscribed = true;
+                self.agent = params.first().and_then(Value::as_str).unwrap_or("").to_string();
                 let sid = hex::encode(self.en1);
                 let r = json!([[["mining.set_difficulty", sid], ["mining.notify", sid]], sid, EN2_BYTES]);
                 self.reply(&id, r, Value::Null).await
@@ -185,6 +195,9 @@ impl Session {
             }
             "mining.authorize" => {
                 let user = params.first().and_then(Value::as_str).unwrap_or("");
+                if self.authorized {
+                    return self.reply(&id, json!(true), Value::Null).await;
+                }
                 let (addr, worker) = user.split_once('.').unwrap_or((user, "default"));
                 match script_for_address(addr, self.pool.net) {
                     Ok(script) if self.subscribed => {
@@ -192,6 +205,7 @@ impl Session {
                         self.worker = worker.chars().take(64).collect();
                         self.script = script;
                         self.authorized = true;
+                        self.pool.live.connect(&self.addr, &self.worker, &self.agent);
                         self.reply(&id, json!(true), Value::Null).await?;
                         let d = self.diff;
                         self.send(json!({"id": null, "method": "mining.set_difficulty", "params": [d]})).await?;
@@ -218,6 +232,7 @@ impl Session {
                         st.accepted.fetch_add(1, Ordering::Relaxed);
                         *st.accepted_diff.lock().unwrap() += acc.credited;
                         self.pool.ledger.share(&self.addr, acc.credited);
+                        self.pool.live.share(&self.addr, &self.worker, acc.credited);
                         if let Some((block_hex, hash)) = acc.block {
                             self.found_block(block_hex, hash);
                         }
@@ -235,6 +250,7 @@ impl Session {
                             self.pool.stats.stale.fetch_add(1, Ordering::Relaxed);
                         } else {
                             self.pool.stats.rejected.fetch_add(1, Ordering::Relaxed);
+                            self.pool.live.reject(&self.addr, &self.worker);
                             self.bad_streak += 1;
                             if self.bad_streak >= 100 {
                                 anyhow::bail!("too many invalid shares");
@@ -344,7 +360,7 @@ impl Session {
                 Ok(Some(r)) => r,
                 Err(e) => format!("error: {e}"),
             };
-            tracing::info!("BLOCK height {height} hash {hash} found by {who}: {res}");
+            pool.event(if res == "accepted" { "info" } else { "warn" }, format!("BLOCK height {height} hash {hash} found by {who}: {res}"));
             if res == "accepted" {
                 pool.stats.blocks.fetch_add(1, Ordering::Relaxed);
             }
