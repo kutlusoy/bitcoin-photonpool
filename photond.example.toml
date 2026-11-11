@@ -1,0 +1,29 @@
+[node]
+rpc_url = "http://127.0.0.1:8332"
+# "cookie:<path to .cookie>", "env:<VAR>" with user:password inside, or "user:password"
+auth = "cookie:/var/lib/bitcoind/.cookie"
+poll_ms = 100
+
+[pool]
+network = "mainnet"        # mainnet, testnet or regtest
+mode = "pplns"             # "solo": the finder is paid directly; "pplns": reward split in the coinbase
+address = "bc1q..."        # pool fee and remainder address
+stratum_listen = "0.0.0.0:3333"
+coinbase_tag = "/photonpool/"
+refresh_secs = 30
+max_connections = 20000
+
+[difficulty]
+start = 1024
+min = 1
+max = 1.0e12
+target_share_secs = 10
+
+[pplns]
+window_factor = 2.0        # window size in multiples of the network difficulty
+fee_percent = 1.0
+max_outputs = 200          # miner outputs per coinbase; the rest goes to the pool address
+dust_sats = 1000
+
+[ledger]
+path = "photond.db"

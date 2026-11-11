@@ -1,0 +1,11 @@
+# Lean Bitcoin Core for the pool: no wallet, no tx index, pruned.
+# getblocktemplate and submitblock work on a pruned node; the pool never needs old blocks.
+server=1
+prune=2000
+dbcache=4096
+txindex=0
+disablewallet=1
+listen=1
+maxconnections=40
+rpcbind=127.0.0.1
+rpcallowip=127.0.0.1
