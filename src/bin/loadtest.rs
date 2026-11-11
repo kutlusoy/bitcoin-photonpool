@@ -181,11 +181,12 @@ async fn miner(idx: usize, a: Arc<Args>, st: Arc<Stats>, released: Arc<Mock>) {
     let mut prog = [0u8; 20];
     prog[..8].copy_from_slice(&(idx as u64 + 1).to_be_bytes());
     let user = format!("{}.w{idx}", bech32::segwit::encode(hrp, bech32::segwit::VERSION_0, &prog).unwrap());
+    let agent = ["bitaxe/BM1370/v2.9.0", "NerdMiner/1.0", "cgminer/4.11.1", "Antminer S19", "cpuminer/2.5", "bitaxe/BM1366/v2.4"][idx % 6];
     let Ok(sock) = TcpStream::connect(&a.pool).await else { return };
     let _ = sock.set_nodelay(true);
     let (r, mut w) = sock.into_split();
     let mut lines = BufReader::new(r).lines();
-    for m in [json!({"id": 2, "method": "mining.subscribe", "params": ["loadtest/1"]}), json!({"id": 3, "method": "mining.authorize", "params": [user, "x"]})] {
+    for m in [json!({"id": 2, "method": "mining.subscribe", "params": [agent]}), json!({"id": 3, "method": "mining.authorize", "params": [user, "x"]})] {
         if w.write_all(format!("{m}\n").as_bytes()).await.is_err() {
             return;
         }

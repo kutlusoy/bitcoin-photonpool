@@ -175,6 +175,20 @@ impl PplnsCfg {
 }
 
 impl Config {
+    /// Block explorer for links: the configured URL, `off` for none, or mempool.space for the network by default.
+    pub fn explorer(&self) -> String {
+        let e = self.http.explorer_url.trim();
+        match e {
+            "off" => String::new(),
+            "" => match self.network() {
+                Ok(Network::Mainnet) => "https://mempool.space".into(),
+                Ok(Network::Testnet) => "https://mempool.space/testnet4".into(),
+                _ => String::new(),
+            },
+            _ => e.trim_end_matches('/').to_string(),
+        }
+    }
+
     pub fn load(path: &str) -> Result<Self> {
         let text = std::fs::read_to_string(path).with_context(|| format!("reading {path}"))?;
         let cfg: Config = toml::from_str(&text).with_context(|| format!("parsing {path}"))?;

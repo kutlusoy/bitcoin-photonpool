@@ -225,7 +225,7 @@ async fn pool_view(State(st): State<St>) -> Json<Value> {
     let (found24h, by_status, total) = tokio::task::spawn_blocking(move || (ledger.blocks_since(day_ago), ledger.blocks_by_status(), ledger.block_count())).await.unwrap_or_default();
     let c = &p.cfg.http;
     Json(json!({
-        "name": c.name, "version": env!("CARGO_PKG_VERSION"), "release": env!("CARGO_PKG_VERSION"), "network": p.cfg.pool.network, "explorerUrl": c.explorer_url,
+        "name": c.name, "version": env!("CARGO_PKG_VERSION"), "release": env!("CARGO_PKG_VERSION"), "network": p.cfg.pool.network, "explorerUrl": p.cfg.explorer(),
         "uptime": p.started.elapsed().as_secs_f64(),
         "stratum": {"host": c.stratum_host, "ports": [{"port": port_of(&p.cfg.pool.stratum_listen), "mode": mode_name(p), "override": false}]},
         "blocksTotal": total, "payoutsTotal": 0,
@@ -243,7 +243,7 @@ async fn blocks(State(st): State<St>, Query(q): Query<Limit>) -> Json<Value> {
     let (n, off) = (q.limit.unwrap_or(12).min(50) as i64, q.offset.unwrap_or(0).min(10_000_000) as i64);
     let ledger = p.ledger.clone();
     let rows = tokio::task::spawn_blocking(move || ledger.blocks_page(off, n)).await.unwrap_or_default();
-    let base = &p.cfg.http.explorer_url;
+    let base = &p.cfg.explorer();
     Json(Value::Array(rows.into_iter().map(|b| block_json(base, &b, true)).collect()))
 }
 
@@ -318,7 +318,7 @@ async fn engine(State(st): State<St>) -> Json<Value> {
     let hr = hashrate_obj(p);
     let online = p.live.workers_online();
     Json(json!({
-        "pool": {"name": p.cfg.http.name, "version": env!("CARGO_PKG_VERSION"), "release": env!("CARGO_PKG_VERSION"), "uptime": p.started.elapsed().as_secs_f64(), "mode": "core", "explorerUrl": p.cfg.http.explorer_url},
+        "pool": {"name": p.cfg.http.name, "version": env!("CARGO_PKG_VERSION"), "release": env!("CARGO_PKG_VERSION"), "uptime": p.started.elapsed().as_secs_f64(), "mode": "core", "explorerUrl": p.cfg.explorer()},
         "node": {
             "height": height, "tip": tip, "tipTime": t.tip_unix.load(Relaxed), "connected": t.node_up.load(Relaxed), "transport": "http-rpc",
             "rttMs": t.rpc_ms.load(Relaxed) as f64, "p50": quantile(&lat, 0.5), "p95": quantile(&lat, 0.95), "samples": lat.len(),
@@ -397,7 +397,7 @@ async fn account(State(st): State<St>, Path(address): Path<String>) -> Response 
     }
     workers.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
     let shares = |(d, n): (f64, i64)| if n > 0 { json!({mode_name(&p): {"difficulty": d, "count": n}}) } else { json!({}) };
-    let base = &p.cfg.http.explorer_url;
+    let base = &p.cfg.explorer();
     let tip = tip_height(&p);
     Json(json!({
         "address": address, "hashrate": hashrate, "workers": workers.len(), "workerList": workers,
@@ -417,7 +417,7 @@ async fn account_page(st: St, address: String, kind: &str, q: PageQ) -> Response
         return (StatusCode::BAD_REQUEST, "invalid address").into_response();
     }
     let (offset, limit) = (q.offset.unwrap_or(0).clamp(0, 10_000_000), q.limit.unwrap_or(20).clamp(1, 100));
-    let (base, tip, ledger, kind) = (p.cfg.http.explorer_url.clone(), tip_height(&p), p.ledger.clone(), kind.to_string());
+    let (base, tip, ledger, kind) = (p.cfg.explorer(), tip_height(&p), p.ledger.clone(), kind.to_string());
     let v = tokio::task::spawn_blocking(move || match kind.as_str() {
         "credits" => {
             let (rows, total) = ledger.account_credits_page(&address, offset, limit);

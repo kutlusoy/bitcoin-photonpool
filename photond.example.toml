@@ -36,7 +36,7 @@ path = "photond.db"
 listen = "127.0.0.1:8080"
 name = "photon"
 stratum_host = ""                      # host shown in the stratum URL; empty uses the host of the page
-explorer_url = "https://mempool.space" # block links; empty for none
+explorer_url = ""                      # block links; empty = mempool.space for the network, "off" for none
 music_dir = "music"                    # audio files and playlist.json for the player
 rate_per_min = 300
 trust_proxy = false                    # true only behind a reverse proxy you control (X-Forwarded-For)

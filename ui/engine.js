@@ -122,7 +122,7 @@ function render() {
     `${span('dim', 'backend   ')}${esc(n.backend || 'gbt')}  ${span('dim', 'batch rpc')} ${n.batchMs.toFixed(0)} ms`,
   ].join('\n');
   $('#pane-alloc').innerHTML = [
-    `${span('dim', 'candidates ')}${num(s.alloc.candidates)}${n.candidatesAvailable ? span('dim', ' of ' + num(n.candidatesAvailable) + ' coinbase variant(s): one for all in pplns, one per address in solo') : ''}`,
+    `${span('dim', 'candidates ')}${num(s.alloc.candidates)}${n.candidatesAvailable ? span('dim', ' of ' + num(n.candidatesAvailable) + ' coinbase variant(s)') : ''}`,
     `${span('dim', 'units/s    ')}${num(s.alloc.unitsPerSec)}`,
     `${span('dim', 'epoch use  ')}${bar(s.alloc.epochUse, 14, s.alloc.epochUse > 0.9 ? 'warn' : 'c2')} ${pct(s.alloc.epochUse)}`,
     `${span('dim', 'overlap    ')}${s.alloc.overlap ? span('err', s.alloc.overlap + ' flagged') : span('ok', '0 flagged')}`,
