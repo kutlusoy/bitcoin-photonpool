@@ -27,7 +27,7 @@ The daemon serves the pages itself (all assets are embedded in the binary) on `[
 - Pool: hashrate and history charts, miners by device type (Bitaxe, NerdMiner, cgminer family, ...), found blocks with maturity state, coinbase payout plan of the next block.
 - Engine: chain tip, template timings, shares, connections and traffic, event feed, and the Photon Core, a live 3D view of node, template, coinbase, share check and miners.
 - Miner: `account <address>` or `/miner/<address>` shows workers, hashrate history, shares, and what the coinbase of found blocks paid to that address (maturing and received).
-- Optional background music: put audio files and an optional `playlist.json` into `music/` (see `music/README.md`); without files the page plays a generated score. Check the license of a track before you publish it.
+- Optional background music: put audio files and an optional `playlist.json` into `music/` (see `music/README.md`); without files there is no player. Check the license of a track before you publish it.
 
 The JSON API under `/public/v1/` (`pool`, `engine`, `blocks`, `devices`, `history`, `history/devices`, `events`, `account/<address>`) is read only and rate limited per client. Addresses of other miners are shortened.
 

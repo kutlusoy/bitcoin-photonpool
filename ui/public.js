@@ -133,8 +133,7 @@ function render() {
     `${span('dim', 'password  ')}x`,
     `${span('dim', 'miner     ')}enable version rolling`,
     '',
-    `${span('dim', 'works     ')}Bitaxe (ESP-Miner), NerdMiner, cgminer family`,
-    `${span('dim', 'asic      ')}Antminer, Whatsminer, Avalon, cgminer: 4 byte extranonce2`,
+    `${span('dim', 'protocol  ')}Stratum V1, version rolling, extranonce2 4 bytes`,
   ].join('\n');
   const portsOf = (mode) => p.stratum.ports.filter((x) => x.mode === mode).map((x) => x.port + (x.override ? '*' : '')).join(',') || '-';
   $('#pane-modes').innerHTML = [span('row-h', pad('MODE', 7) + pad('FEE', 6) + pad('STATE', 8) + 'PORT')]
