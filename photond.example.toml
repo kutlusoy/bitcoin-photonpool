@@ -12,6 +12,8 @@ stratum_listen = "0.0.0.0:3333"
 coinbase_tag = "/photonpool/"
 refresh_secs = 30
 max_connections = 20000
+# Must equal bitcoind -blockreservedweight (default 8000 since Bitcoin Core 30, about 40 outputs); raise both for more outputs.
+coinbase_reserved_weight = 8000
 
 [difficulty]
 start = 1024
@@ -22,7 +24,7 @@ target_share_secs = 10
 [pplns]
 window_factor = 2.0        # window size in multiples of the network difficulty
 fee_percent = 1.0
-max_outputs = 200          # miner outputs per coinbase; the rest goes to the pool address
+max_outputs = 200          # upper limit of miner outputs per coinbase, further capped by coinbase_reserved_weight
 dust_sats = 1000
 
 [ledger]

@@ -2,7 +2,7 @@
 
 Headless Stratum V1 mining pool daemon (`photond`) for Bitcoin Core, written in Rust. It talks to a stock Bitcoin Core node over RPC (`getblocktemplate`, `submitblock`), needs no node patch and works with a pruned node.
 
-Status: initial version, tested end to end against Bitcoin Core 29 on regtest (`test/regtest_e2e.sh`). Not yet tested on mainnet or on real ASIC hardware.
+Status: initial version, tested end to end against Bitcoin Core 32.1 (and 29.0) on regtest (`test/regtest_e2e.sh`). Not yet tested on mainnet or on real ASIC hardware.
 
 ## Modes
 
@@ -16,6 +16,7 @@ Payout addresses: P2PKH, P2SH, P2WPKH, P2WSH and P2TR.
 - Stratum V1 with version rolling (BIP310 `mining.configure`), `mining.suggest_difficulty`, vardiff per connection, duplicate and stale share detection.
 - Tip changes are detected by polling `getbestblockhash` (`poll_ms`) and pushed to all connections at once; a refreshed job is sent every `refresh_secs`.
 - Shares and found blocks are logged to SQLite (WAL, batched writer thread). The PPLNS window is read from it and pruned automatically.
+- Chain parameters are not hardcoded: bits, target, reward, height and the witness commitment all come from `getblocktemplate`. Only the address prefixes depend on `pool.network`.
 - The coinbase is built by the pool: BIP34 height, pool tag, 4 byte extranonce1 per connection, 4 byte extranonce2 rolled by the miner, witness commitment from the node.
 
 ## Build and run
@@ -40,6 +41,7 @@ BITCOIND=... BITCOINCLI=... test/regtest_e2e.sh                         # real n
 
 ## Limits of this version
 
+- The number of PPLNS coinbase outputs is capped by `pool.coinbase_reserved_weight`, which must equal the node setting `blockreservedweight` (default 8000 since Bitcoin Core 30, about 40 outputs). Otherwise a block with a large coinbase could exceed the maximum block weight.
 - Stratum V2 and signet are not supported.
 - No payout wallet: in `pplns` mode miners are paid by the coinbase itself, so there is nothing to send. Miners whose share is below `dust_sats` are not paid in that block and the amount goes to the pool output; the window keeps their shares for the following blocks.
 - No web UI or admin API yet; the daemon logs a summary every minute.

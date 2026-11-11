@@ -9,3 +9,5 @@ listen=1
 maxconnections=40
 rpcbind=127.0.0.1
 rpcallowip=127.0.0.1
+# Weight kept free for the pool coinbase (about 172 per payout output). Keep pool.coinbase_reserved_weight equal.
+blockreservedweight=100000

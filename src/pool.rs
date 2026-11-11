@@ -68,7 +68,9 @@ impl Pool {
         let ledger = self.ledger.clone();
         let window = tokio::task::spawn_blocking(move || ledger.window(limit)).await??;
         let window: Vec<(Vec<u8>, f64)> = window.into_iter().filter_map(|(a, w)| script_for_address(&a, self.net).ok().map(|s| (s, w))).collect();
-        let plan = build_plan(probe.coinbase_value, &window, &self.pool_script, &self.cfg.pplns);
+        let mut pplns = self.cfg.pplns.clone();
+        pplns.max_outputs = pplns.outputs_for_weight(self.cfg.pool.coinbase_reserved_weight);
+        let plan = build_plan(probe.coinbase_value, &window, &self.pool_script, &pplns);
         Template::from_gbt(raw, Some(plan))
     }
 
