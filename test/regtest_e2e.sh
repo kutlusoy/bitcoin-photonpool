@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # End-to-end test against a real Bitcoin Core regtest node.
 # Usage: BITCOIND=/path/to/bitcoind BITCOINCLI=/path/to/bitcoin-cli test/regtest_e2e.sh
+# Build both from bitcoin/bitcoin master with test/build_core_main.sh.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 : "${BITCOIND:?set BITCOIND}" "${BITCOINCLI:?set BITCOINCLI}"
