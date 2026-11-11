@@ -39,6 +39,14 @@ BITCOIND=... BITCOINCLI=... test/regtest_e2e.sh                         # real n
 
 `src/bin/testminer.rs` is a minimal CPU Stratum client used by the end to end test (regtest difficulty only).
 
+## Performance design
+
+- New tips are awaited with `waitfornewblock` (no polling; nodes without it are polled). On a new tip a valid block without transactions is published at once (mainnet, not on retarget blocks), the full template follows when `getblocktemplate` returns.
+- One job per template is rendered once and shared by all connections (pplns) or per payout address (solo); a tip change costs each connection a socket write.
+- The PPLNS window lives in memory as per-address buckets and is persisted every few seconds, so share rate and window size do not reach SQLite.
+- Found blocks are submitted before the share is acknowledged, and to `[[extra_nodes]]` in parallel.
+- `test/load.sh [conns] [pplns|solo] [secs]` runs the pool against a mock node with simulated miners. 4000 connections on a 4 core machine that also runs the simulated miners: 400 shares/s, no rejected shares, clean job delay at a new block about 50 ms median and about 110 ms at p99 (of which about 20 ms is the mock node), 73 MB RSS.
+
 ## Limits of this version
 
 - The number of PPLNS coinbase outputs is capped by `pool.coinbase_reserved_weight`, which must equal the node setting `blockreservedweight` (default 8000 since Bitcoin Core 30, about 40 outputs). Otherwise a block with a large coinbase could exceed the maximum block weight.
