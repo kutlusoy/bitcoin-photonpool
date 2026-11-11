@@ -49,7 +49,7 @@ async fn main() -> Result<()> {
             tokio::spawn(pool.clone().run_stats_loop());
             tokio::select! {
                 r = stratum::serve(pool.clone()) => r,
-                _ = tokio::signal::ctrl_c() => { tracing::info!("shutting down"); Ok(()) }
+                _ = tokio::signal::ctrl_c() => { tracing::info!("shutting down"); pool.ledger.flush_now(); Ok(()) }
             }
         }
     }

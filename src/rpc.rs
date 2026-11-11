@@ -25,7 +25,11 @@ impl NodeRpc {
     pub fn new(url: &str, auth: &str) -> Result<Self> {
         let cookie = auth.strip_prefix("cookie:").map(str::to_string);
         Ok(Self {
-            client: Client::builder(TokioExecutor::new()).pool_max_idle_per_host(4).build_http(),
+            client: {
+                let mut c = HttpConnector::new();
+                c.set_nodelay(true);
+                Client::builder(TokioExecutor::new()).pool_max_idle_per_host(4).build(c)
+            },
             uri: url.parse().with_context(|| format!("bad rpc_url {url}"))?,
             auth: RwLock::new(Self::header(auth, cookie.as_deref())?),
             cookie,
@@ -55,7 +59,17 @@ impl NodeRpc {
         }
     }
 
-    async fn call_once(&self, method: &str, params: &Value) -> Result<Value> {
+    async fn call_raw(&self, method: &str, params: &Value) -> Result<Bytes> {
+        match self.send_raw(method, params).await {
+            Err(e) if self.cookie.is_some() && e.to_string().contains("HTTP 401") => {
+                *self.auth.write().unwrap() = Self::header("", self.cookie.as_deref())?;
+                self.send_raw(method, params).await
+            }
+            r => r,
+        }
+    }
+
+    async fn send_raw(&self, method: &str, params: &Value) -> Result<Bytes> {
         let body = json!({"jsonrpc": "1.0", "id": self.seq.fetch_add(1, Ordering::Relaxed), "method": method, "params": params});
         let req = Request::post(self.uri.clone())
             .header("content-type", "application/json")
@@ -69,7 +83,12 @@ impl NodeRpc {
         if status == hyper::StatusCode::UNAUTHORIZED {
             bail!("{method}: HTTP 401, node refused the credentials");
         }
-        let mut v: Value = serde_json::from_slice(&bytes).map_err(|e| anyhow!("{method}: HTTP {status}, unparsable body: {e}"))?;
+        Ok(bytes)
+    }
+
+    async fn call_once(&self, method: &str, params: &Value) -> Result<Value> {
+        let bytes = self.send_raw(method, params).await?;
+        let mut v: Value = serde_json::from_slice(&bytes).map_err(|e| anyhow!("{method}: unparsable body: {e}"))?;
         if let Some(err) = v.get("error").filter(|e| !e.is_null()) {
             bail!("{method}: {err}");
         }
@@ -90,7 +109,14 @@ impl NodeRpc {
         Ok(v.as_str().map(str::to_string))
     }
 
-    pub async fn template(&self) -> Result<Value> {
-        self.call("getblocktemplate", json!([{"rules": ["segwit"]}])).await
+    /// Raw JSON-RPC response body of getblocktemplate, parsed once by the caller (the body is megabytes on a full block).
+    pub async fn template_raw(&self) -> Result<Bytes> {
+        self.call_raw("getblocktemplate", &json!([{"rules": ["segwit"]}])).await
+    }
+
+    /// Blocks until the tip differs from `current_tip` or `timeout_ms` has passed; returns the tip hash (node RPC `waitfornewblock`).
+    pub async fn wait_for_new_block(&self, timeout_ms: u64, current_tip: &str) -> Result<(String, u32)> {
+        let v = self.call("waitfornewblock", json!([timeout_ms.max(1), current_tip])).await?;
+        Ok((v["hash"].as_str().ok_or_else(|| anyhow!("bad waitfornewblock"))?.to_string(), v["height"].as_u64().unwrap_or(0) as u32))
     }
 }

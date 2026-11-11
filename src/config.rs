@@ -14,6 +14,9 @@ pub enum Mode {
 #[derive(Deserialize, Clone)]
 pub struct Config {
     pub node: NodeCfg,
+    /// Further nodes that every found block is submitted to as well (faster propagation, resilience).
+    #[serde(default)]
+    pub extra_nodes: Vec<ExtraNode>,
     pub pool: PoolCfg,
     #[serde(default)]
     pub difficulty: DiffCfg,
@@ -30,6 +33,12 @@ pub struct NodeCfg {
     pub auth: String,
     #[serde(default = "d_poll")]
     pub poll_ms: u64,
+}
+
+#[derive(Deserialize, Clone)]
+pub struct ExtraNode {
+    pub rpc_url: String,
+    pub auth: String,
 }
 
 #[derive(Deserialize, Clone)]
@@ -50,6 +59,9 @@ pub struct PoolCfg {
     /// Weight the node leaves free for the coinbase (bitcoind `-blockreservedweight`, default 8000 since Bitcoin Core 30). Limits the number of coinbase outputs.
     #[serde(default = "d_reserved")]
     pub coinbase_reserved_weight: u64,
+    /// On a new tip, hand out a valid block without transactions at once and follow with the full template (mainnet only).
+    #[serde(default = "d_true")]
+    pub fast_empty_job: bool,
 }
 
 #[derive(Deserialize, Clone)]
@@ -90,6 +102,7 @@ fn d_tag() -> String { "/photonpool/".into() }
 fn d_refresh() -> u64 { 30 }
 fn d_max_conns() -> usize { 20_000 }
 fn d_reserved() -> u64 { 8000 }
+fn d_true() -> bool { true }
 fn d_start() -> f64 { 1024.0 }
 fn d_min() -> f64 { 1.0 }
 fn d_max() -> f64 { 1.0e12 }

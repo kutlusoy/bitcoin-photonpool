@@ -2,8 +2,9 @@ use crate::addr::script_for_address;
 use crate::config::Mode;
 use crate::diff::target_from_difficulty;
 use crate::pool::Pool;
-use crate::template::{stratum_prevhash, Template};
-use crate::tx::{coinbase_with_witness, merkle_root, put_varint, sha256d, CoinbaseParts, EN1_BYTES, EN2_BYTES};
+use crate::template::Template;
+use crate::tx::{coinbase_with_witness, merkle_root, put_varint, sha256d, EN1_BYTES, EN2_BYTES};
+use crate::template::JobData;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::Ordering;
@@ -17,7 +18,7 @@ const VERSION_MASK: u32 = 0x1fff_e000;
 const MAX_LINE: u64 = 16 * 1024;
 const MAX_JOBS: usize = 8;
 const IDLE: Duration = Duration::from_secs(15 * 60);
-const GRACE: Duration = Duration::from_secs(20);
+const GRACE: Duration = Duration::from_secs(10);
 
 pub async fn serve(pool: Arc<Pool>) -> anyhow::Result<()> {
     let listener = TcpListener::bind(&pool.cfg.pool.stratum_listen).await?;
@@ -41,7 +42,7 @@ pub async fn serve(pool: Arc<Pool>) -> anyhow::Result<()> {
 
 struct SessionJob {
     tpl: Arc<Template>,
-    parts: CoinbaseParts,
+    data: Arc<JobData>,
     seen: HashSet<(u32, u32, u32, u32)>,
 }
 
@@ -216,11 +217,11 @@ impl Session {
                         let st = &self.pool.stats;
                         st.accepted.fetch_add(1, Ordering::Relaxed);
                         *st.accepted_diff.lock().unwrap() += acc.credited;
-                        self.pool.ledger.share(&self.addr, &self.worker, acc.credited);
-                        self.reply(&id, json!(true), Value::Null).await?;
+                        self.pool.ledger.share(&self.addr, acc.credited);
                         if let Some((block_hex, hash)) = acc.block {
                             self.found_block(block_hex, hash);
                         }
+                        self.reply(&id, json!(true), Value::Null).await?;
                         self.retarget(false).await
                     }
                     Err(rej) => {
@@ -248,27 +249,25 @@ impl Session {
     }
 
     async fn send_job(&mut self, t: &Arc<Template>, clean: bool) -> anyhow::Result<()> {
-        let outs = t.coinbase_outputs(&self.script);
-        let parts = CoinbaseParts::new(t.height, self.pool.cfg.pool.coinbase_tag.as_bytes(), &outs);
-        let id = self.pool.next_job_id();
-        let branch: Vec<String> = t.branch.iter().map(hex::encode).collect();
-        let msg = json!({"id": null, "method": "mining.notify", "params": [
-            id, stratum_prevhash(&t.prev), hex::encode(&parts.coinb1), hex::encode(&parts.coinb2), branch,
-            format!("{:08x}", t.version), format!("{:08x}", t.bits), format!("{:08x}", t.curtime), clean
-        ]});
+        let data = t.job_for(&self.script);
+        let id = t.job_id();
         if clean {
             self.jobs.clear();
             self.order.clear();
         }
         self.tip = t.tip_hex.clone();
-        self.jobs.insert(id.clone(), SessionJob { tpl: t.clone(), parts, seen: HashSet::new() });
-        self.order.push_back(id);
+        if !self.jobs.contains_key(&id) {
+            self.jobs.insert(id.clone(), SessionJob { tpl: t.clone(), data: data.clone(), seen: HashSet::new() });
+            self.order.push_back(id);
+        }
         while self.order.len() > MAX_JOBS {
             if let Some(old) = self.order.pop_front() {
                 self.jobs.remove(&old);
             }
         }
-        self.send(msg).await
+        let line = data.notify(clean);
+        tokio::time::timeout(Duration::from_secs(10), self.w.write_all(&line)).await??;
+        Ok(())
     }
 
     fn check_share(&mut self, p: &[Value]) -> Result<Accepted, Reject> {
@@ -292,7 +291,7 @@ impl Session {
         }
         let version = if self.mask == 0 { t.version } else { (t.version & !self.mask) | (vbits & self.mask) };
 
-        let cb = job.parts.assemble(&self.en1, &en2_n.to_be_bytes());
+        let cb = job.data.parts.assemble(&self.en1, &en2_n.to_be_bytes());
         let root = merkle_root(&sha256d(&cb), &t.branch);
         let mut header = [0u8; 80];
         header[0..4].copy_from_slice(&version.to_le_bytes());
@@ -329,8 +328,18 @@ impl Session {
         let height = self.jobs.values().next().map(|j| j.tpl.height).unwrap_or(0);
         let reward = self.jobs.values().next().map(|j| j.tpl.coinbase_value).unwrap_or(0);
         let who = if pool.cfg.pool.mode == Mode::Solo { self.addr.clone() } else { "pplns".to_string() };
+        let block_hex = Arc::new(hex::encode(block));
+        for n in pool.extra_nodes.iter().cloned() {
+            let b = block_hex.clone();
+            tokio::spawn(async move {
+                match n.submit_block(&b).await {
+                    Ok(r) => tracing::info!("extra node submitblock: {}", r.unwrap_or_else(|| "accepted".into())),
+                    Err(e) => tracing::warn!("extra node submitblock failed: {e}"),
+                }
+            });
+        }
         tokio::spawn(async move {
-            let res = match pool.node.submit_block(&hex::encode(block)).await {
+            let res = match pool.node.submit_block(&block_hex).await {
                 Ok(None) => "accepted".to_string(),
                 Ok(Some(r)) => r,
                 Err(e) => format!("error: {e}"),
@@ -358,13 +367,8 @@ impl Session {
         if (new / self.diff - 1.0).abs() < 0.25 {
             return Ok(());
         }
-        self.prev_diff = Some((self.diff, Instant::now() + GRACE));
+        self.prev_diff = Some((self.diff, Instant::now() + Duration::from_secs(self.pool.cfg.pool.refresh_secs) + GRACE));
         self.diff = new;
-        self.send(json!({"id": null, "method": "mining.set_difficulty", "params": [new]})).await?;
-        let t = self.pool.template.borrow().clone();
-        if let Some(t) = t {
-            self.send_job(&t, false).await?;
-        }
-        Ok(())
+        self.send(json!({"id": null, "method": "mining.set_difficulty", "params": [new]})).await
     }
 }

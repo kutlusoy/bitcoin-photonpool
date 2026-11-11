@@ -29,6 +29,19 @@ impl Network {
         }
     }
 
+    pub fn halving_interval(self) -> u32 {
+        if self == Self::Regtest { 150 } else { 210_000 }
+    }
+
+    /// Networks on which the difficulty only changes at multiples of 2016 blocks, so the next block can reuse the bits of the last template.
+    pub fn fast_empty_job_supported(self) -> bool {
+        matches!(self, Self::Mainnet | Self::Regtest)
+    }
+
+    pub fn retargets(self) -> bool {
+        self != Self::Regtest
+    }
+
     fn hrp(self) -> &'static str {
         match self {
             Self::Mainnet => "bc",
